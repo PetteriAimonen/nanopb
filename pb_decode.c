@@ -42,7 +42,7 @@ static bool checkreturn pb_dec_fixed_length_bytes(pb_istream_t *stream, const pb
 static bool checkreturn pb_skip_varint(pb_istream_t *stream);
 static bool checkreturn pb_skip_string(pb_istream_t *stream);
 
-#ifdef PB_ENABLE_MALLOC
+#if defined(PB_ENABLE_MALLOC) || defined(PB_ENABLE_MALLOC_CONTEXT)
 static bool checkreturn allocate_field(pb_istream_t *stream, void *pData, size_t data_size, size_t array_size);
 static void initialize_pointer_field(void *pItem, pb_field_iter_t *field);
 static bool checkreturn pb_release_union_field(pb_istream_t *stream, pb_field_iter_t *field);
@@ -160,6 +160,9 @@ pb_istream_t pb_istream_from_buffer(const pb_byte_t *buf, size_t msglen)
 #ifndef PB_NO_ERRMSG
     stream.errmsg = NULL;
 #endif
+    #ifdef PB_ENABLE_MALLOC_CONTEXT
+    stream.realloc = NULL;
+    #endif
     return stream;
 }
 
@@ -553,7 +556,7 @@ static bool checkreturn decode_static_field(pb_istream_t *stream, pb_wire_type_t
     }
 }
 
-#ifdef PB_ENABLE_MALLOC
+#if defined(PB_ENABLE_MALLOC) || defined(PB_ENABLE_MALLOC_CONTEXT)
 /* Allocate storage for the field and store the pointer at iter->pData.
  * array_size is the number of entries to reserve in an array.
  * Zero size is not allowed, use pb_free() for releasing.
@@ -595,7 +598,15 @@ static bool checkreturn allocate_field(pb_istream_t *stream, void *pData, size_t
     /* Allocate new or expand previous allocation */
     /* Note: on failure the old pointer will remain in the structure,
      * the message must be freed by caller also on error return. */
-    ptr = pb_realloc(ptr, array_size * data_size);
+    #ifdef PB_ENABLE_MALLOC_CONTEXT
+    if (stream->realloc == NULL) {
+      ptr = pb_realloc(ptr, array_size * data_size);
+    } else {
+      ptr = stream->realloc(stream,ptr, array_size * data_size);
+    }
+    #else
+      ptr = pb_realloc(ptr, array_size * data_size);
+    #endif
     if (ptr == NULL)
         PB_RETURN_ERROR(stream, "realloc failed");
     
@@ -622,7 +633,7 @@ static void initialize_pointer_field(void *pItem, pb_field_iter_t *field)
 
 static bool checkreturn decode_pointer_field(pb_istream_t *stream, pb_wire_type_t wire_type, pb_field_iter_t *field)
 {
-#ifndef PB_ENABLE_MALLOC
+#if ! ( defined(PB_ENABLE_MALLOC) || defined(PB_ENABLE_MALLOC_CONTEXT) )
     PB_UNUSED(wire_type);
     PB_UNUSED(field);
     PB_RETURN_ERROR(stream, "no malloc support");
@@ -796,7 +807,7 @@ static bool checkreturn decode_callback_field(pb_istream_t *stream, pb_wire_type
 
 static bool checkreturn decode_field(pb_istream_t *stream, pb_wire_type_t wire_type, pb_field_iter_t *field)
 {
-#ifdef PB_ENABLE_MALLOC
+#if defined(PB_ENABLE_MALLOC) || defined(PB_ENABLE_MALLOC_CONTEXT)
     /* When decoding an oneof field, check if there is old data that must be
      * released first. */
     if (PB_HTYPE(field->type) == PB_HTYPE_ONEOF)
@@ -1170,7 +1181,7 @@ bool checkreturn pb_decode_ex(pb_istream_t *stream, const pb_msgdesc_t *fields, 
         return false;
     }
     
-#ifdef PB_ENABLE_MALLOC
+#if defined(PB_ENABLE_MALLOC) || defined(PB_ENABLE_MALLOC_CONTEXT)
     if (!status)
         pb_release(fields, dest_struct);
 #endif
@@ -1184,7 +1195,7 @@ bool checkreturn pb_decode(pb_istream_t *stream, const pb_msgdesc_t *fields, voi
 
     status = pb_decode_inner(stream, fields, dest_struct, 0);
 
-#ifdef PB_ENABLE_MALLOC
+#if defined(PB_ENABLE_MALLOC) || defined(PB_ENABLE_MALLOC_CONTEXT)
     if (!status)
         pb_release(fields, dest_struct);
 #endif
@@ -1192,7 +1203,7 @@ bool checkreturn pb_decode(pb_istream_t *stream, const pb_msgdesc_t *fields, voi
     return status;
 }
 
-#ifdef PB_ENABLE_MALLOC
+#if defined(PB_ENABLE_MALLOC) || defined(PB_ENABLE_MALLOC_CONTEXT)
 /* Given an oneof field, if there has already been a field inside this oneof,
  * release it before overwriting with a different one. */
 static bool pb_release_union_field(pb_istream_t *stream, pb_field_iter_t *field)
@@ -1504,7 +1515,7 @@ static bool checkreturn pb_dec_bytes(pb_istream_t *stream, const pb_field_iter_t
     
     if (PB_ATYPE(field->type) == PB_ATYPE_POINTER)
     {
-#ifndef PB_ENABLE_MALLOC
+#if ! ( defined(PB_ENABLE_MALLOC) || defined(PB_ENABLE_MALLOC_CONTEXT) )
         PB_RETURN_ERROR(stream, "no malloc support");
 #else
         if (stream->bytes_left < size)
@@ -1546,7 +1557,7 @@ static bool checkreturn pb_dec_string(pb_istream_t *stream, const pb_field_iter_
 
     if (PB_ATYPE(field->type) == PB_ATYPE_POINTER)
     {
-#ifndef PB_ENABLE_MALLOC
+#if ! ( defined(PB_ENABLE_MALLOC) || defined(PB_ENABLE_MALLOC_CONTEXT) )
         PB_RETURN_ERROR(stream, "no malloc support");
 #else
         if (stream->bytes_left < size)
